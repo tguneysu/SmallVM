@@ -382,8 +382,76 @@ static OBJ primSetPalette(int argCount, OBJ *args) {
 	return falseObj;
 }
 
-static OBJ primMerge(int argCount, OBJ *args) {
+static OBJ primPalette(int argCount, OBJ *args) {
+	// This fails after a bunch of times
+	int size =
+		EM_ASM_INT({ return window.palette ? window.palette.length : 0 });
+	OBJ palette = newObj(ListType, size + 1, 0);
+	FIELD(palette, 0) = int2obj(size);
+	for (int i = 1; i <= size; i++) {
+		FIELD(palette, i) =
+			int2obj(EM_ASM_INT({ return window.palette[$0] }, i - 1));
+	}
+	return palette;
+};
 
+static OBJ primCroppedBitmap(int argCount, OBJ *args) {
+	int width = obj2int(args[4]);
+	int height = obj2int(args[5]);
+	int originX = obj2int(args[1]);
+	int originY = obj2int(args[2]);
+
+	// Size is incorrect!
+	OBJ newBitmap =
+		newObj(
+			ByteArrayType,
+			((width - originX) * (height - originY) + 3) / 4,
+			0
+		);
+
+	EM_ASM_({
+			for (var y = 0; y < $5; y++) {
+				for (var x = 0; x < $4; x++) {
+					HEAPU8[$6 + y * $4 + x] =
+						HEAPU8[$0 + ($2 + y) * $3 + $1 + x];
+				}
+			}
+		},
+		(uint8 *) &FIELD(args[0], 0),	// $0, bitmap
+		originX,						// $1, origin x
+		originY,						// $2, origin y
+		obj2int(args[3]),				// $3, origin width
+		width,							// $4, crop width
+		height,							// $5, crop height
+		(uint8 *) &FIELD(newBitmap, 0) 	// $6, cropped bitmap
+	);
+	return newBitmap;
+}
+
+static OBJ primMergeBitmap(int argCount, OBJ *args) {
+	EM_ASM_({
+			var bitmapHeight = $2 / $1;
+			for (var y = 0; y < bitmapHeight; y++) {
+				for (var x = 0; x < $1; x++) {
+					var bufIndex =
+						($7 + y) * (window.ctx.canvas.width / $4) + x + $6;
+					var pixelValue = HEAPU8[$0 + y * $1 + x];
+					if (pixelValue !== $5) {
+						HEAPU8[$3 + bufIndex] = pixelValue;
+					}
+				}
+			}
+		},
+		(uint8 *) &FIELD(args[0], 0),	// $0, bitmap
+		obj2int(args[1]),				// $1, bitmap width
+		BYTES(args[0]),					// $2, bitmap byte size
+		(uint8 *) &FIELD(args[2], 0),	// $3, buffer
+		obj2int(args[3]),				// $4, scale
+		obj2int(args[4]),				// $5, transparent color index
+		obj2int(args[5]),				// $6, destination x
+		obj2int(args[6])				// $7, destination y
+	);
+	return falseObj;
 }
 
 static OBJ primDrawBuffer(int argCount, OBJ *args) {
@@ -556,10 +624,14 @@ static PrimEntry entries[] = {
 	{"circle", primCircle},
 	{"triangle", primTriangle},
 	{"text", primText},
+
 	{"setPalette", primSetPalette},
 	{"vgaPalette", primVGAPalette},
-	{"merge", primMerge},
+	{"currentPalette", primPalette},
+	{"croppedBitmap", primCroppedBitmap},
+	{"mergeBitmap", primMergeBitmap},
 	{"drawBuffer", primDrawBuffer},
+
 	{"tftTouched", primTftTouched},
 	{"tftTouchX", primTftTouchX},
 	{"tftTouchY", primTftTouchY},
